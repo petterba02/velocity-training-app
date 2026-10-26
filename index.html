@@ -12,35 +12,56 @@
       font-family: -apple-system, sans-serif;
       background: #111;
       color: #fff;
+      margin: 0;
+      min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      margin: 0;
-      padding: 20px 0;
-      box-sizing: border-box;
+    }
+    .tabs {
+      display: flex;
+      width: 100%;
+      border-bottom: 1px solid #2c2c2e;
+    }
+    .tab {
+      flex: 1;
+      font-size: 17px;
+      padding: 16px 0;
+      border: none;
+      border-radius: 0;
+      background: transparent;
+      color: #888;
+      border-bottom: 3px solid transparent;
+    }
+    .tab.active { color: #fff; border-bottom-color: #0a84ff; }
+    .panel {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
       gap: 16px;
+      padding: 24px 0;
+      width: 100%;
     }
     h1 { font-size: 22px; margin: 0; }
     .big { font-size: 72px; font-variant-numeric: tabular-nums; font-weight: 600; }
     .unit { font-size: 18px; color: #aaa; margin-top: -12px; }
     .row { display: flex; gap: 12px; align-items: center; }
     label { color: #aaa; font-size: 16px; }
-    select {
-      font-size: 18px;
-      padding: 8px 12px;
+    select, input {
+      font-size: 20px;
+      padding: 10px 12px;
       border-radius: 10px;
       border: none;
       background: #3a3a3c;
       color: #fff;
     }
+    input { width: 110px; text-align: right; }
     ol#peaks {
       list-style: none;
       margin: 0;
       padding: 0;
-      width: 220px;
-      font-size: 22px;
+      width: 320px;
+      font-size: 20px;
       font-variant-numeric: tabular-nums;
     }
     ol#peaks li {
@@ -49,8 +70,11 @@
       padding: 6px 0;
       border-bottom: 1px solid #2c2c2e;
     }
-    ol#peaks li span:first-child { color: #aaa; }
-    button {
+    ol#peaks li span:first-child { color: #aaa; width: 28px; }
+    ol#peaks li span:nth-child(2) { flex: 1; text-align: right; }
+    ol#peaks li span:nth-child(3) { width: 110px; text-align: right; }
+    ol#peaks li.head { color: #888; font-size: 14px; border-bottom-color: #3a3a3c; }
+    button.action {
       font-size: 18px;
       padding: 14px 24px;
       border: none;
@@ -59,29 +83,50 @@
       color: #fff;
     }
     button.secondary { background: #3a3a3c; }
+    .hint { color: #888; font-size: 14px; text-align: center; padding: 0 24px; max-width: 320px; }
     #status { color: #aaa; font-size: 14px; text-align: center; padding: 0 20px; }
   </style>
 </head>
 <body>
-  <h1>Vertical Velocity</h1>
-  <div class="big" id="vel">0.00</div>
-  <div class="unit">m/s</div>
-
-  <div class="row">
-    <label for="topN">Show top</label>
-    <select id="topN"></select>
-    <label for="topN">peaks</label>
+  <div class="tabs">
+    <button class="tab active" id="tabSetup">Setup</button>
+    <button class="tab" id="tabTrain">Train</button>
   </div>
-  <ol id="peaks"></ol>
 
-  <button id="start">Start</button>
-  <div class="row" id="controls" hidden>
-    <button id="calibrate">Calibrate</button>
-    <button id="resetPeaks" class="secondary">Reset peaks</button>
+  <!-- SETUP TAB -->
+  <div class="panel" id="panelSetup">
+    <h1>Setup</h1>
+    <div class="row">
+      <label for="weight">Bar weight</label>
+      <input id="weight" type="number" inputmode="decimal" min="1" step="0.5" placeholder="100">
+      <label for="weight">kg</label>
+    </div>
+    <div class="hint">Use the total weight the phone moves with. Attach the phone to the bar for the most accurate power.</div>
+    <button class="action" id="start">Start</button>
+    <div id="setupStatus"></div>
   </div>
-  <div id="status"></div>
+
+  <!-- TRAIN TAB -->
+  <div class="panel" id="panelTrain" hidden>
+    <div class="big" id="vel">0.00</div>
+    <div class="unit">m/s</div>
+
+    <div class="row">
+      <label for="topN">Show top</label>
+      <select id="topN"></select>
+      <label for="topN">peaks</label>
+    </div>
+    <ol id="peaks"></ol>
+
+    <div class="row">
+      <button class="action" id="calibrate">Calibrate</button>
+      <button class="action secondary" id="resetPeaks">Reset peaks</button>
+    </div>
+    <div id="status"></div>
+  </div>
 
   <script>
+    const G = 9.81;
     const SAMPLE_MS = 1000;       // calibration averaging time
     const CAL_SPREAD = 0.15;      // max movement (m/s²) allowed while calibrating
     const STILL_ACC = 0.15;       // below this (m/s²) the phone counts as "still"
@@ -89,11 +134,36 @@
     const REP_START = 0.15;       // m/s: upward speed that starts a peak
     const REP_END = 0.05;         // m/s: speed below which the peak is finished
     const REP_MIN = 0.20;         // m/s: peaks slower than this are ignored as noise
+    const ACC_SMOOTH = 0.3;       // smoothing for the acceleration used in power (0-1)
 
     const $ = (id) => document.getElementById(id);
     const status = $("status");
 
-    // Selector for how many peaks to show
+    // ---------- Tabs ----------
+    function showTab(name) {
+      const setup = name === "setup";
+      $("panelSetup").hidden = !setup;
+      $("panelTrain").hidden = setup;
+      $("tabSetup").classList.toggle("active", setup);
+      $("tabTrain").classList.toggle("active", !setup);
+    }
+    $("tabSetup").addEventListener("click", () => showTab("setup"));
+    $("tabTrain").addEventListener("click", () => showTab("train"));
+
+    // ---------- Bar weight ----------
+    let mass = 0;                 // kg
+    try {
+      const m = parseFloat(localStorage.getItem("mass"));
+      if (m > 0) { mass = m; $("weight").value = m; }
+    } catch (e) {}
+
+    $("weight").addEventListener("input", () => {
+      const m = parseFloat($("weight").value);
+      mass = m > 0 ? m : 0;
+      try { localStorage.setItem("mass", String(mass)); } catch (e) {}
+    });
+
+    // ---------- Top-N selector ----------
     for (let i = 1; i <= 10; i++) {
       const o = document.createElement("option");
       o.value = i; o.textContent = i;
@@ -106,6 +176,7 @@
     } catch (e) {}
     $("topN").value = topN;
 
+    // ---------- State ----------
     let bias = { x: 0, y: 0, z: 0 };
     try {
       const saved = JSON.parse(localStorage.getItem("bias"));
@@ -114,18 +185,25 @@
 
     let grav = null;              // smoothed gravity direction (device frame)
     let v = 0;                    // vertical velocity, m/s
+    let accSmooth = 0;            // smoothed vertical acceleration, m/s²
     let lastT = null;
     let stillMs = 0;
     let sampling = null;
 
-    let peaks = [];               // one entry (m/s) per finished upward movement
+    let peaks = [];               // { v: m/s, p: watts or null } per finished upward movement
     let inRep = false;
-    let repMax = 0;
+    let repMaxV = 0;
+    let repMaxP = 0;
+    let repMass = 0;
 
+    // ---------- Display ----------
     function renderPeaks() {
-      const top = peaks.slice().sort((a, b) => b - a).slice(0, topN);
-      $("peaks").innerHTML = top
-        .map((p, i) => "<li><span>" + (i + 1) + "</span><span>" + p.toFixed(2) + " m/s</span></li>")
+      const top = peaks.slice().sort((a, b) => b.v - a.v).slice(0, topN);
+      const head = '<li class="head"><span>#</span><span>Velocity</span><span>Power</span></li>';
+      $("peaks").innerHTML = top.length === 0 ? "" : head + top
+        .map((r, i) =>
+          "<li><span>" + (i + 1) + "</span><span>" + r.v.toFixed(2) + " m/s</span><span>" +
+          (r.p === null ? "--" : Math.round(r.p) + " W") + "</span></li>")
         .join("");
     }
 
@@ -133,21 +211,32 @@
       $("vel").textContent = v.toFixed(2);
     }
 
+    // ---------- Rep / peak tracking ----------
     function trackPeaks() {
+      // Instantaneous power: P = m * (g + a) * v, only counted while moving up
+      const power = mass > 0 && v > 0 ? Math.max(0, mass * (G + accSmooth) * v) : 0;
+
       if (!inRep) {
-        if (v > REP_START) { inRep = true; repMax = v; }
+        if (v > REP_START) {
+          inRep = true;
+          repMaxV = v;
+          repMaxP = power;
+          repMass = mass;
+        }
       } else {
-        if (v > repMax) repMax = v;
+        if (v > repMaxV) repMaxV = v;
+        if (power > repMaxP) repMaxP = power;
         if (v < REP_END) {
           inRep = false;
-          if (repMax >= REP_MIN) {
-            peaks.push(repMax);
+          if (repMaxV >= REP_MIN) {
+            peaks.push({ v: repMaxV, p: repMass > 0 ? repMaxP : null });
             renderPeaks();
           }
         }
       }
     }
 
+    // ---------- Sensor handling ----------
     function handleMotion(e) {
       const a = e.acceleration;                       // gravity removed
       const ag = e.accelerationIncludingGravity;      // gravity included
@@ -175,12 +264,13 @@
 
       // Component of acceleration along the vertical axis (m/s², up is positive)
       const vert = (ax * grav.x + ay * grav.y + az * grav.z) / gl;
+      accSmooth += ACC_SMOOTH * (vert - accSmooth);
 
       // Zero-velocity update: if the phone is still, reset velocity to stop drift
       const total = Math.hypot(ax, ay, az);
       stillMs = total < STILL_ACC ? stillMs + dt * 1000 : 0;
 
-      if (stillMs > STILL_MS) v = 0;
+      if (stillMs > STILL_MS) { v = 0; accSmooth = 0; }
       else v += vert * dt;
 
       trackPeaks();
@@ -191,32 +281,46 @@
       try { await navigator.wakeLock.request("screen"); } catch (e) {}
     }
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && !$("controls").hidden) keepAwake();
+      if (document.visibilityState === "visible" && started) keepAwake();
     });
 
+    // ---------- Controls ----------
     $("topN").addEventListener("change", () => {
       topN = parseInt($("topN").value, 10);
       try { localStorage.setItem("topN", String(topN)); } catch (e) {}
       renderPeaks();
     });
 
+    let started = false;
     $("start").addEventListener("click", async () => {
+      const setupStatus = $("setupStatus");
+      if (!(mass > 0)) {
+        setupStatus.textContent = "Enter the bar weight first.";
+        return;
+      }
+      if (started) {
+        showTab("train");
+        return;
+      }
       try {
+        // iOS requires an explicit permission request from a tap
         if (typeof DeviceMotionEvent !== "undefined" &&
             typeof DeviceMotionEvent.requestPermission === "function") {
           const result = await DeviceMotionEvent.requestPermission();
           if (result !== "granted") {
-            status.textContent = "Motion permission denied.";
+            setupStatus.textContent = "Motion permission denied.";
             return;
           }
         }
         window.addEventListener("devicemotion", handleMotion);
+        started = true;
         keepAwake();
-        $("start").hidden = true;
-        $("controls").hidden = false;
+        setupStatus.textContent = "";
+        $("start").textContent = "Go to Train";
         status.textContent = "Place the phone still, then tap Calibrate.";
+        showTab("train");
       } catch (err) {
-        status.textContent = "Error: " + err.message;
+        setupStatus.textContent = "Error: " + err.message;
       }
     });
 
@@ -240,14 +344,14 @@
         }
         bias = { x: mean("x"), y: mean("y"), z: mean("z") };
         try { localStorage.setItem("bias", JSON.stringify(bias)); } catch (e) {}
-        v = 0; peaks = []; inRep = false;
+        v = 0; accSmooth = 0; peaks = []; inRep = false;
         render(); renderPeaks();
         status.textContent = "Calibrated. Ready.";
       }, SAMPLE_MS);
     });
 
     $("resetPeaks").addEventListener("click", () => {
-      peaks = []; inRep = false; v = 0;
+      peaks = []; inRep = false; v = 0; accSmooth = 0;
       render(); renderPeaks();
       status.textContent = "Peaks cleared.";
     });
